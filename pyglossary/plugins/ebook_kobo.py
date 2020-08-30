@@ -149,7 +149,6 @@ class Writer:
 		from pyglossary.entry import Entry
 
 		glos = self._glos
-		words = []
 		dataEntryCount = 0
 
 		htmlHeader = "<?xml version=\"1.0\" encoding=\"utf-8\"?><html>\n"
@@ -169,6 +168,7 @@ class Writer:
 				gzipFile.write(htmlContents.encode("utf-8"))
 			htmlContents = htmlHeader
 
+		allWords = []
 		data = []
 
 		while True:
@@ -179,9 +179,7 @@ class Writer:
 				dataEntryCount += 1
 				continue
 			l_word = entry.l_word
-			if len(l_word) == 1:
-				data.append(entry.getRaw(glos))
-				continue
+			allWords += l_word
 			wordsByPrefix = OrderedDict()
 			for word in l_word:
 				prefix = self.get_prefix(word)
@@ -189,12 +187,18 @@ class Writer:
 					wordsByPrefix[prefix].append(word)
 				else:
 					wordsByPrefix[prefix] = [word]
-			if len(wordsByPrefix) == 1:
-				data.append(entry.getRaw(glos))
-				continue
-			defi = entry.defi
+			defi = self.fix_defi(entry.defi)
+			mainHeadword = l_word[0]
 			for prefix, p_words in wordsByPrefix.items():
-				data.append(Entry(p_words, defi).getRaw(glos))
+				headword, *variants = p_words
+				if headword != mainHeadword:
+					headword = f"{mainHeadword}, {headword}"
+				htmlVariants = "".join(
+					f'<variant name="{v.strip().lower()}"/>'
+					for v in variants
+				)
+				body = f"<div><b>{headword}</b><var>{htmlVariants}</var><br/>{defi}</div>"
+				data.append(Entry(headword, body).getRaw(glos))
 			del entry
 
 		log.info(f"\nKobo: sorting entries...")
@@ -204,26 +208,16 @@ class Writer:
 		for rawEntry in data:
 			entry = Entry.fromRaw(glos, rawEntry)
 
-			headword, *variants = entry.l_word
+			headword = entry.l_word[0]
 			prefix = self.get_prefix(headword)
 			if lastPrefix and prefix != lastPrefix:
 				writeGroup(lastPrefix)
 				groupCounter = 0
 			lastPrefix = prefix
 
-			defi = entry.defi
-			defi = self.fix_defi(defi)
-			for w in entry.l_word:
-				words.append(w)
-			variants = [v.strip().lower() for v in variants]
-			variants_html = (
-				'<var>' +
-				''.join(f'<variant name="{v}"/>' for v in variants) +
-				'</var>'
-			)
-			htmlContents += f"<w><a name=\"{headword}\" /><div><b>{headword}</b>"\
-				f"{variants_html}<br/>{defi}</div></w>\n"
+			htmlContents += f"<w><a name=\"{headword}\" />{entry.defi}</w>\n"
 			groupCounter += 1
+		del data
 
 		if groupCounter > 0:
 			writeGroup(lastPrefix)
@@ -234,7 +228,7 @@ class Writer:
 				" and replaced '<img ...' tags in definitions with placeholders"
 			)
 
-		self._words = words
+		self._words = allWords
 
 	def open(self, filename: str) -> None:
 		self._filename = filename
